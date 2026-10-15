@@ -10,7 +10,7 @@
 
 ## 安装
 
-dsh plugin --profile demo add <这里填你的仓库地址>
+dsh plugin --profile demo add <https://github.com/huoze-design/dsh-daily-coding-plugin>
 
 ## 使用
 
