@@ -1,0 +1,21 @@
+{
+    "name": "dsh-daily-coding-plugin",
+    "version": "0.1.0",
+    "type": "module",
+    "main": "index.js",
+    "files": [
+        "index.js",
+        "cordis.patch.yml"
+    ],
+    "dsh": {
+        "bundle": {
+            "patch": "./cordis.patch.yml"
+        }
+    },
+    "peerDependencies": {
+        "@deepseek-ai/dsh-tools": "0.2.1-alpha.3"
+    },
+    "devDependencies": {
+        "@deepseek-ai/dsh-tools": "0.2.1-alpha.3"
+    }
+}
