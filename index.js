@@ -1,12 +1,17 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 export const name = 'daily-coding'
 export const inject = ['tools']
 
-// 力扣官网「每日一题」的取货单
+// ===== 文件路径 =====
+const DATA_DIR = join(homedir(), '.daily-coding-plugin')
+const DATA_FILE = join(DATA_DIR, 'checkins.json')       // 打卡本
+const CACHE_FILE = join(DATA_DIR, 'question-cache.json') // 今日题目缓存
+
+// ===== 力扣取货单 =====
 const DAILY_QUERY = `query questionOfToday {
   todayRecord {
     date
@@ -20,38 +25,19 @@ const DAILY_QUERY = `query questionOfToday {
   }
 }`
 
-// 打卡本文件：用户主目录下的 .daily-coding-plugin/checkins.json
-const DATA_FILE = join(homedir(), '.daily-coding-plugin', 'checkins.json')
-
-// 读打卡本：文件不存在（还没打过卡）就返回空列表
-async function readDates() {
-    try {
-        const text = await readFile(DATA_FILE, 'utf8')
-        const data = JSON.parse(text)
-        return Array.isArray(data.dates) ? data.dates : []
-    } catch {
-        return []
-    }
+// ===== 日期工具 =====
+function today() {
+    return new Date().toLocaleDateString('sv-SE')
 }
 
-// 写打卡本
-async function saveDates(dates) {
-    await mkdir(dirname(DATA_FILE), { recursive: true })
-    await writeFile(DATA_FILE, JSON.stringify({ dates }, null, 2), 'utf8')
-}
-
-// 日期搬运工：把日期挪 offset 天（跨月进位交给 JS）
 function shiftDay(dateStr, offset) {
     const [y, m, d] = dateStr.split('-').map(Number)
     return new Date(Date.UTC(y, m - 1, d + offset)).toISOString().slice(0, 10)
 }
 
-// 数连续打卡：从今天往回数，断一天就停
-// （今天还没打，就从昨天开始数，不算断签）
 function currentStreak(dates) {
     const set = new Set(dates)
-    const today = new Date().toLocaleDateString('sv-SE')
-    let cursor = set.has(today) ? today : shiftDay(today, -1)
+    let cursor = set.has(today()) ? today() : shiftDay(today(), -1)
     let streak = 0
     while (set.has(cursor)) {
         streak++
@@ -60,7 +46,58 @@ function currentStreak(dates) {
     return streak
 }
 
+// ===== 打卡本读写（含 v1→v2 自动迁移）=====
+async function migrate(data) {
+    // 旧版账本：只有日期数组 → 升级成新版，题目信息留空
+    if (Array.isArray(data.dates)) {
+        return {
+            version: 2,
+            records: data.dates.map(d => ({ date: d, id: '', title: '', difficulty: '', solved: false })),
+        }
+    }
+    if (!Array.isArray(data.records)) return { version: 2, records: [] }
+    return data
+}
+
+async function readData() {
+    try {
+        return await migrate(JSON.parse(await readFile(DATA_FILE, 'utf8')))
+    } catch {
+        return { version: 2, records: [] }
+    }
+}
+
+async function saveData(data) {
+    await mkdir(DATA_DIR, { recursive: true })
+    await writeFile(DATA_FILE, JSON.stringify(data, null, 2), 'utf8')
+}
+
+// ===== 今日题目缓存 =====
+async function readCache() {
+    try {
+        const cache = JSON.parse(await readFile(CACHE_FILE, 'utf8'))
+        if (cache.date === today()) return cache
+    } catch { }
+    return null
+}
+
+async function saveCache(q) {
+    await mkdir(DATA_DIR, { recursive: true })
+    await writeFile(CACHE_FILE, JSON.stringify({
+        date: today(),
+        id: q.questionFrontendId,
+        title: q.translatedTitle,
+        difficulty: q.difficulty,
+        slug: q.titleSlug,
+    }, null, 2), 'utf8')
+}
+
+function questionText(q) {
+    return `今日题目：力扣 #${q.id} ${q.title}\n难度：${q.difficulty}\n链接：https://leetcode.cn/problems/${q.slug}/`
+}
+
 export function apply(ctx) {
+    // ===== 工具 1：查题（先缓存后网络，断网兜底）=====
     ctx.tools.register(defineTool({
         name: 'daily',
         description: "Get today's LeetCode daily coding question (number, title and link).",
@@ -70,58 +107,81 @@ export function apply(ctx) {
             render: (_args, value) => [{ type: 'text', text: value }],
         },
         async execute() {
+            const cached = await readCache()
+            if (cached) return questionText(cached)
             try {
                 const response = await fetch('https://leetcode.cn/graphql/', {
                     method: 'POST',
                     headers: { 'content-type': 'application/json' },
                     body: JSON.stringify({ query: DAILY_QUERY }),
                 })
-                if (!response.ok) {
-                    return '力扣官网好像出问题了（HTTP ' + response.status + '）。稍后再试～'
-                }
+                if (!response.ok) return `力扣官网好像出问题了（HTTP ${response.status}），稍后再试试吧。`
                 const data = await response.json()
                 const q = data.data.todayRecord[0].question
-                return `今日题目：力扣 #${q.questionFrontendId} ${q.translatedTitle}\n难度：${q.difficulty}\n链接：https://leetcode.cn/problems/${q.titleSlug}/`
+                await saveCache(q)
+                return questionText(q)
             } catch {
-                return '网络开小差了，没能连上力扣官网。请检查网络后再说一次「今天的题目」～'
+                return '网络开小差了，没能连上力扣官网。检查一下网络，稍后再试。'
             }
         },
     }))
 
+    // ===== 工具 2：打卡（带 solved 参数）=====
     ctx.tools.register(defineTool({
         name: 'daily_checkin',
-        description: "Check in today's LeetCode daily question. Call it when the user solved today's question.",
-        parameters: {},
+        description: "Check in for today's LeetCode daily question. Call it after the user works on today's question.",
+        parameters: {
+            type: 'object',
+            properties: {
+                solved: { type: 'boolean', description: "Whether the user solved today's question. Defaults to false." },
+            },
+        },
         output: {
             schema: { type: 'string' },
             render: (_args, value) => [{ type: 'text', text: value }],
         },
-        async execute() {
-            const today = new Date().toLocaleDateString('sv-SE')
-            const dates = await readDates()
-            if (dates.includes(today)) {
-                return `今天已经打过卡啦！当前累计 ${dates.length} 天。`
+        async execute(args) {
+            const data = await readData()
+            const t = today()
+            if (data.records.some(r => r.date === t)) {
+                return `今天已经打过卡啦！当前累计 ${data.records.length} 天。`
             }
-            dates.push(today)
-            await saveDates(dates)
-            return `打卡成功！✅ 今天 ${today} 已记录。累计打卡 ${dates.length} 天。`
+            const cache = await readCache()
+            const solved = args.solved === true
+            data.records.push({
+                date: t,
+                id: cache ? cache.id : '',
+                title: cache ? cache.title : '',
+                difficulty: cache ? cache.difficulty : '',
+                solved,
+            })
+            await saveData(data)
+            let text = '打卡成功！✅ 今天已记录。'
+            if (cache) {
+                text += `\n题目：#${cache.id} ${cache.title}（${solved ? '做出来了 🎉' : '还没做出来，明天再战'}）`
+            } else {
+                text += '\n（小提示：先问 daily 再打卡，打卡本会自动记下题目信息）'
+            }
+            text += `\n累计打卡 ${data.records.length} 天。`
+            return text
         },
     }))
 
+    // ===== 工具 3：统计 =====
     ctx.tools.register(defineTool({
         name: 'daily_stats',
-        description: "Show the user's check-in stats: total days, current streak and last check-in date.",
+        description: "Show the user's check-in stats: total days, current streak and the latest check-in date.",
         parameters: {},
         output: {
             schema: { type: 'string' },
             render: (_args, value) => [{ type: 'text', text: value }],
         },
         async execute() {
-            const dates = await readDates()
-            const sorted = [...dates].sort()
-            const last = sorted[sorted.length - 1] ?? '还没有打卡记录'
-            const streak = currentStreak(dates)
-            return `累计打卡：${dates.length} 天\n当前连续：${streak} 天\n最近打卡：${last}`
+            const data = await readData()
+            const dates = data.records.map(r => r.date)
+            const solvedCount = data.records.filter(r => r.solved).length
+            const last = [...dates].sort().at(-1)
+            return `累计打卡：${dates.length} 天\n当前连续：${currentStreak(dates)} 天\n做出来的题：${solvedCount} 道\n最近打卡：${last ?? '还没有'}\n（没打就喊 daily_checkin 补上！）`
         },
     }))
 }
