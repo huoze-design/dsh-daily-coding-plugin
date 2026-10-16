@@ -131,10 +131,7 @@ export function apply(ctx) {
         name: 'daily_checkin',
         description: "Check in for today's LeetCode daily question. Call it after the user works on today's question.",
         parameters: {
-            type: 'object',
-            properties: {
-                solved: { type: 'boolean', description: "Whether the user solved today's question. Defaults to false." },
-            },
+            solved: { type: 'boolean', description: "Whether the user solved today's question. Defaults to false." },
         },
         output: {
             schema: { type: 'string' },
