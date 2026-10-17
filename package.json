@@ -1,6 +1,6 @@
 {
     "name": "dsh-daily-coding-plugin",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "type": "module",
     "main": "index.js",
     "exports": {
@@ -17,6 +17,7 @@
         "storage.js",
         "date.js",
         "leetcode.js",
+        "routes.js",
         "client.js",
         "cordis.patch.yml"
     ],
