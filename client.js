@@ -27,6 +27,15 @@ window.__ModuleLoader__.load({
             for (const r of records) map[r.date] = r
             return map
         }
+        function lastNDays(n) {
+            const out = []
+            const t = new Date()
+            for (let i = n - 1; i >= 0; i--) {
+                const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() - i)
+                out.push(ymd(d.getFullYear(), d.getMonth() + 1, d.getDate()))
+            }
+            return out
+        }
 
         function shiftMonth(view, delta) {
             let m = view.month + delta
@@ -120,13 +129,13 @@ window.__ModuleLoader__.load({
 
             async function loadToday() {
                 function lastNDays(n) {
-                    const out =[]
-                    const t  = new Date()
-                    for (let i = n - 1; i >= 0; i--){
+                    const out = []
+                    const t = new Date()
+                    for (let i = n - 1; i >= 0; i--) {
                         const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() - i)
-                        out.push(ymd(d.getFullYear(),d.getMonth() + 1,d.getDate()))
+                        out.push(ymd(d.getFullYear(), d.getMonth() + 1, d.getDate()))
                     }
-                    return out 
+                    return out
                 }
                 setBusy(true)
                 try {
