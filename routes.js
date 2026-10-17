@@ -13,7 +13,7 @@ export function makeRoutes() {
             kind: 'exact',
             path: '/api/daily-coding/records',
             handler: async (req, res) => {
-                const { records } = readData()
+                const { records } = await readData()
                 sendJson(res, { records })
             },
         },
