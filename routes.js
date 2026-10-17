@@ -12,7 +12,7 @@ export function makeRoutes() {
         {
             kind: 'exact',
             path: '/api/daily-coding/records',
-            handler: (req, res) => {
+            handler: async (req, res) => {
                 const { records } = readData()
                 sendJson(res, { records })
             },
@@ -20,8 +20,8 @@ export function makeRoutes() {
         {
             kind: 'exact',
             path: '/api/daily-coding/stats',
-            handler: (req, res) => {
-                const { records } = readData()
+            handler: async (req, res) => {
+                const { records } = await readData()
                 sendJson(res, {
                     total: records.length,
                     currentStreak: currentStreak(records.map((r) => r.date)),
