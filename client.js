@@ -27,15 +27,22 @@ window.__ModuleLoader__.load({
             for (const r of records) map[r.date] = r
             return map
         }
-        function lastNDays(n) {
+        // ===== 时间轴：今天前后各 180 天 =====
+        const TL_DAYS = 180
+        const BAR_W = 12               // 一根柱子多宽
+        const BAR_GAP = 3              // 柱子之间的缝
+        const CELL_W = BAR_W + BAR_GAP // 每前进一天，内容右移多少像素
+
+        function timelineDays() {
             const out = []
             const t = new Date()
-            for (let i = n - 1; i >= 0; i--) {
-                const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() - i)
+            for (let i = -TL_DAYS; i <= TL_DAYS; i++) {
+                const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + i)
                 out.push(ymd(d.getFullYear(), d.getMonth() + 1, d.getDate()))
             }
             return out
         }
+        const TIMELINE = timelineDays()   // 插件加载时算一次，之后不再变
 
         function shiftMonth(view, delta) {
             let m = view.month + delta
@@ -78,6 +85,7 @@ window.__ModuleLoader__.load({
             cardMeta: { opacity: 0.7, wordBreak: 'break-all' },
             sectionHead: { display: 'flex', justifyContent: 'space-between', marginTop: 14, fontSize: 12, opacity: 0.75 },
             chart: { display: 'flex', alignItems: 'stretch', gap: 2, height: 40, marginTop: 6 },
+            trackView: { overflow: 'hidden', cursor: 'grab', touchAction: 'none', userSelect: 'none', padding: '4px 0', borderTop: '1px solid rgba(127,127,127,0.15)', borderBottom: '1px solid rgba(127,127,127,0.15)' },
             bar: { flex: '1 1 0', borderRadius: 2, minWidth: 2 },
             barSolved: { background: '#10b981' },
             barChecked: { background: '#f59e0b' },
@@ -112,6 +120,116 @@ window.__ModuleLoader__.load({
             const [today, setToday] = React.useState(null)
             const [busy, setBusy] = React.useState(false)
 
+            // ===== 时间轴拖动引擎 =====
+            const viewRef = React.useRef(null)     // 视口：能看到的那一块
+            const trackRef = React.useRef(null)    // 轨道：一条超长横幅，被平移
+            const offsetRef = React.useRef(0)      // 当前平移了多少像素
+            const dragRef = React.useRef(null)     // 拖动过程中的临时数据
+            const rafRef = React.useRef(0)         // requestAnimationFrame 句柄
+            const placedRef = React.useRef(false)  // 是否已经定位过「今天」
+
+            // 平移量限制：0 到「轨道总宽 - 视口宽」
+            function clampOffset(v) {
+                const el = viewRef.current
+                const viewW = el ? el.clientWidth : 0
+                const max = Math.max(0, TIMELINE.length * CELL_W - viewW)
+                return Math.min(Math.max(v, 0), max)
+            }
+
+            // 真正干活的一帧：平移轨道 + 让月份跟随
+            function paint() {
+                const track = trackRef.current
+                if (track) track.style.transform = `translate3d(${-offsetRef.current}px,0,0)`
+
+                // 视口正中间那根柱子是哪一天 → 那个月
+                const el = viewRef.current
+                const viewW = el ? el.clientWidth : 0
+                const centerIdx = Math.floor((offsetRef.current + viewW / 2) / CELL_W)
+                const day = TIMELINE[Math.min(Math.max(centerIdx, 0), TIMELINE.length - 1)]
+                if (!day) return
+                const y = Number(day.slice(0, 4))
+                const m = Number(day.slice(5, 7))
+                setView((prev) => (prev.year === y && prev.month === m ? prev : { year: y, month: m }))
+            }
+
+            // 把多次调用合并成「下一帧画一次」
+            function schedulePaint() {
+                if (rafRef.current) return
+                rafRef.current = requestAnimationFrame(() => {
+                    rafRef.current = 0
+                    paint()
+                })
+            }
+
+            function onPointerDown(e) {
+                if (e.button !== undefined && e.button !== 0) return   // 只认左键
+                const el = viewRef.current
+                if (el) el.setPointerCapture(e.pointerId)              // 抓住指针
+                dragRef.current = {
+                    startX: e.clientX,
+                    startOffset: offsetRef.current,
+                    lastX: e.clientX,
+                    lastT: performance.now(),
+                    v: 0,
+                }
+                if (el) el.style.cursor = 'grabbing'
+            }
+
+            function onPointerMove(e) {
+                const d = dragRef.current
+                if (!d) return
+                // 鼠标往右 = 内容往右 = 看到更早的日期 = offset 变小
+                offsetRef.current = clampOffset(d.startOffset - (e.clientX - d.startX))
+                // 顺手采样一下速度，松手时用
+                const now = performance.now()
+                const dt = now - d.lastT
+                if (dt > 0) d.v = (e.clientX - d.lastX) / dt   // 像素/毫秒
+                d.lastX = e.clientX
+                d.lastT = now
+                schedulePaint()
+            }
+
+            function onPointerUp() {
+                const d = dragRef.current
+                dragRef.current = null
+                const el = viewRef.current
+                if (el) el.style.cursor = 'grab'
+                if (!d) return
+                let velocity = -d.v                 // 内容的速度 = 手指速度取反
+                if (Math.abs(velocity) < 0.15) return
+                const step = () => {
+                    offsetRef.current = clampOffset(offsetRef.current + velocity * 16)
+                    paint()
+                    velocity *= 0.94                // 每帧衰减 6%，慢慢停
+                    rafRef.current = Math.abs(velocity) > 0.05 ? requestAnimationFrame(step) : 0
+                }
+                if (rafRef.current) cancelAnimationFrame(rafRef.current)
+                rafRef.current = requestAnimationFrame(step)
+            }
+
+            // 挂载后：把视口定位到今天；面板宽窄变化时重算
+            React.useEffect(() => {
+                const el = viewRef.current
+                if (!el) return
+                const place = () => {
+                    const viewW = el.clientWidth
+                    if (!viewW) return
+                    offsetRef.current = clampOffset(TL_DAYS * CELL_W - viewW / 2 + CELL_W / 2)
+                    placedRef.current = true
+                    paint()
+                }
+                if (!placedRef.current) place()
+                const ro = new ResizeObserver(() => {
+                    if (!placedRef.current) place()
+                    else paint()
+                })
+                ro.observe(el)
+                return () => {
+                    ro.disconnect()
+                    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+                }
+            }, [])
+
             const load = React.useCallback(() => {
                 Promise.all([
                     fetch(STATS_API).then((r) => r.json()),
@@ -128,15 +246,6 @@ window.__ModuleLoader__.load({
             React.useEffect(() => { load() }, [load])
 
             async function loadToday() {
-                function lastNDays(n) {
-                    const out = []
-                    const t = new Date()
-                    for (let i = n - 1; i >= 0; i--) {
-                        const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() - i)
-                        out.push(ymd(d.getFullYear(), d.getMonth() + 1, d.getDate()))
-                    }
-                    return out
-                }
                 setBusy(true)
                 try {
                     const r = await fetch(TODAY_API)
@@ -160,9 +269,6 @@ window.__ModuleLoader__.load({
             const monthDone = records.filter((r) => r.date.startsWith(prefix)).length
             const monthDays = new Date(view.year, view.month, 0).getDate()
             const rate = monthDays ? Math.round((monthDone / monthDays) * 100) : 0
-            // 近 30 天柱状图数据
-            const days30 = lastNDays(30)
-            const recentDone = days30.filter((d) => index[d]).length
 
             const head = React.createElement('div', { style: S.head },
                 React.createElement('h3', { style: S.h3 }, `${view.year} 年 ${view.month} 月`),
@@ -217,18 +323,30 @@ window.__ModuleLoader__.load({
                 : null
             const chart = React.createElement('div', null,
                 React.createElement('div', { style: S.sectionHead },
-                    React.createElement('span', null, '近 30 天'),
-                    React.createElement('span', null, `打卡 ${recentDone} 天`)),
-                React.createElement('div', { style: S.chart },
-                    days30.map((date) => {
-                        const rec = index[date]
-                        const barStyle = Object.assign({}, S.bar, rec ? (rec.solved ? S.barSolved : S.barChecked) : S.barNone)
-                        return React.createElement('div', {
-                            key: date,
-                            style: barStyle,
-                            title: date + (rec ? ' · ' + (rec.id ? `#${rec.id} ${rec.title}` : '已打卡') : ' · 未打卡'),
-                        })
-                    })),
+                    React.createElement('span', null, '时间轴'),
+                    React.createElement('span', null, `本月打卡 ${monthDone} 天`)),
+                React.createElement('div', {
+                    ref: viewRef,
+                    style: S.trackView,
+                    onPointerDown: onPointerDown,
+                    onPointerMove: onPointerMove,
+                    onPointerUp: onPointerUp,
+                    onPointerCancel: onPointerUp,
+                },
+                    React.createElement('div', {
+                        ref: trackRef,
+                        style: { display: 'flex', alignItems: 'flex-end', height: 44, width: TIMELINE.length * CELL_W, willChange: 'transform' },
+                    },
+                        TIMELINE.map((date) => {
+                            const rec = index[date]
+                            const bg = rec ? (rec.solved ? '#10b981' : '#f59e0b') : 'rgba(127,127,127,0.15)'
+                            return React.createElement('div', {
+                                key: date,
+                                title: date + (rec ? ' · ' + (rec.id ? `#${rec.id} ${rec.title}` : '已打卡') : ' · 未打卡'),
+                                style: { width: BAR_W, flex: '0 0 auto', marginRight: BAR_GAP, height: rec ? 40 : 6, background: bg, borderRadius: 2 },
+                            })
+                        })),
+                ),
                 React.createElement('div', { style: S.legend },
                     React.createElement('span', { style: S.legendItem },
                         React.createElement('span', { style: Object.assign({}, S.legendDot, S.barSolved) }), '做出来'),
@@ -238,8 +356,8 @@ window.__ModuleLoader__.load({
                         React.createElement('span', { style: Object.assign({}, S.legendDot, S.barNone) }), '没打卡')))
 
             return React.createElement('div', { style: S.wrap },
-                head, statsLine, actions, weekRow, grid, card, todayCard,chart,
-                React.createElement('div', { style: S.tip }, '绿点=打卡且做出来 · 黄点=打卡未做出来 · 橙框=今天'))
+                head, statsLine, actions, weekRow, grid, card, todayCard, chart,
+                React.createElement('div', { style: S.tip }, '按住时间轴左右拖动，查看前后月份 · 绿=做出来 · 黄=只打卡'))
         }
 
         function apply(ctx) {
