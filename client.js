@@ -1,6 +1,6 @@
 // ============================================================
 // 打卡日历 · 浏览器半场（client）
-// 第 3 课：月历网格 + 点击详情
+// 第 4 课：月份切换 + 完成率
 // ============================================================
 window.__ModuleLoader__.load({
     id: 'dsh-daily-coding-plugin',
@@ -15,7 +15,6 @@ window.__ModuleLoader__.load({
         const RECORDS_API = 'api/daily-coding/records'
         const STATS_API = 'api/daily-coding/stats'
 
-        // ---------- 日历小工具 ----------
         const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 
         function pad(n) {
@@ -31,18 +30,25 @@ window.__ModuleLoader__.load({
             return ymd(t.getFullYear(), t.getMonth() + 1, t.getDate())
         }
 
-        // records 数组 → 以日期为键的字典（点格子时 O(1) 查）
         function buildIndex(records) {
             const map = {}
             for (const r of records) map[r.date] = r
             return map
         }
 
-        // 生成某年某月的格子：前面补空让 1 号落对星期，凑满整周
+        // 翻月：处理跨年
+        function shiftMonth(view, delta) {
+            let m = view.month + delta
+            let y = view.year
+            if (m < 1) { m = 12; y -= 1 }
+            if (m > 12) { m = 1; y += 1 }
+            return { year: y, month: m }
+        }
+
         function monthCells(year, month) {
             const daysInMonth = new Date(year, month, 0).getDate()
-            const firstDay = new Date(year, month - 1, 1).getDay() // 0=周日
-            const lead = (firstDay + 6) % 7 // 周一=0 … 周日=6
+            const firstDay = new Date(year, month - 1, 1).getDay()
+            const lead = (firstDay + 6) % 7
             const cells = []
             for (let i = 0; i < lead; i++) cells.push(null)
             for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, date: ymd(year, month, d) })
@@ -50,22 +56,16 @@ window.__ModuleLoader__.load({
             return cells
         }
 
-        // ---------- 样式 ----------
         const S = {
             wrap: { padding: 16, fontFamily: 'inherit', fontSize: 13 },
-            head: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 },
+            head: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
             h3: { margin: 0, fontSize: 15 },
-            stats: { opacity: 0.7, fontSize: 12 },
+            nav: { display: 'flex', gap: 4 },
+            navBtn: { border: '1px solid rgba(127,127,127,0.35)', background: 'transparent', color: 'inherit', borderRadius: 6, fontSize: 12, padding: '2px 8px', cursor: 'pointer' },
+            stats: { opacity: 0.7, fontSize: 12, marginBottom: 10 },
             week: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', textAlign: 'center', opacity: 0.55, fontSize: 11, marginBottom: 6 },
             grid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 },
-            cell: {
-                position: 'relative',
-                aspectRatio: '1',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 8,
-            },
+            cell: { position: 'relative', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
             cellEmpty: { visibility: 'hidden' },
             cellChecked: { background: 'rgba(16, 185, 129, 0.10)' },
             cellToday: { border: '1px solid #f59e0b', color: '#d97706', fontWeight: 700 },
@@ -94,6 +94,10 @@ window.__ModuleLoader__.load({
             const [stats, setStats] = React.useState(null)
             const [records, setRecords] = React.useState([])
             const [error, setError] = React.useState(null)
+            const [view, setView] = React.useState(() => {
+                const n = new Date()
+                return { year: n.getFullYear(), month: n.getMonth() + 1 }
+            })
             const [selected, setSelected] = React.useState(null)
 
             React.useEffect(() => {
@@ -111,17 +115,26 @@ window.__ModuleLoader__.load({
             if (error) return React.createElement('div', { style: S.wrap }, '取数据失败：' + error)
             if (!stats) return React.createElement('div', { style: S.wrap }, '加载中…')
 
-            const now = new Date()
-            const year = now.getFullYear()
-            const month = now.getMonth() + 1
             const index = buildIndex(records)
-            const cells = monthCells(year, month)
+            const cells = monthCells(view.year, view.month)
             const today = todayStr()
 
+            // 当月完成率
+            const prefix = `${view.year}-${pad(view.month)}`
+            const monthDone = records.filter((r) => r.date.startsWith(prefix)).length
+            const monthDays = new Date(view.year, view.month, 0).getDate()
+            const rate = monthDays ? Math.round((monthDone / monthDays) * 100) : 0
+
             const head = React.createElement('div', { style: S.head },
-                React.createElement('h3', { style: S.h3 }, `${year} 年 ${month} 月`),
-                React.createElement('span', { style: S.stats },
-                    `累计 ${stats.total} · 连续 ${stats.currentStreak} · 做出来 ${stats.solved}`))
+                React.createElement('h3', { style: S.h3 }, `${view.year} 年 ${view.month} 月`),
+                React.createElement('div', { style: S.nav },
+                    React.createElement('button', { style: S.navBtn, onClick: () => { setView(shiftMonth(view, -1)); setSelected(null) } }, '←'),
+                    React.createElement('button', { style: S.navBtn, onClick: () => { const n = new Date(); setView({ year: n.getFullYear(), month: n.getMonth() + 1 }); setSelected(null) } }, '本月'),
+                    React.createElement('button', { style: S.navBtn, onClick: () => { setView(shiftMonth(view, 1)); setSelected(null) } }, '→'),
+                ))
+
+            const statsLine = React.createElement('div', { style: S.stats },
+                `累计 ${stats.total} · 连续 ${stats.currentStreak} · 做出来 ${stats.solved} · ${view.month} 月打卡 ${monthDone}/${monthDays} 天（${rate}%）`)
 
             const weekRow = React.createElement('div', { style: S.week },
                 WEEKDAYS.map((w) => React.createElement('div', { key: w }, w)))
@@ -151,7 +164,7 @@ window.__ModuleLoader__.load({
                     React.createElement('div', { style: S.cardMeta }, '点击有标记的日期，查看当天打卡的题目'))
 
             return React.createElement('div', { style: S.wrap },
-                head, weekRow, grid, card,
+                head, statsLine, weekRow, grid, card,
                 React.createElement('div', { style: S.tip }, '绿点=打卡且做出来 · 黄点=打卡未做出来 · 橙框=今天'))
         }
 
