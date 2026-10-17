@@ -39,7 +39,7 @@ export async function saveData(data) {
 export async function readCache() {
     try {
         const cache = JSON.parse(await readFile(CACHE_FILE, 'utf8'))
-        if (cache.date === today()) return cache
+        if (cache.date === today() && cache.id && cache.title) return cache
     } catch { }
     return null
 }
@@ -49,9 +49,9 @@ export async function saveCache(q) {
     await mkdir(DATA_DIR, { recursive: true })
     await writeFile(CACHE_FILE, JSON.stringify({
         date: today(),
-        id: q.questionFrontendId,
-        title: q.translatedTitle,
+        id: q.id,
+        title: q.title,
         difficulty: q.difficulty,
-        slug: q.titleSlug,
+        slug: q.slug,
     }, null, 2), 'utf8')
 }
