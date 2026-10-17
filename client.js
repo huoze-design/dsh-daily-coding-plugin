@@ -1,6 +1,6 @@
 // ============================================================
 // 打卡日历 · 浏览器半场（client）
-// 第 4 课：月份切换 + 完成率
+// 第 5 课：今日题目 + 刷新
 // ============================================================
 window.__ModuleLoader__.load({
     id: 'dsh-daily-coding-plugin',
@@ -14,21 +14,13 @@ window.__ModuleLoader__.load({
         const TAB_ID = 'daily-coding:calendar'
         const RECORDS_API = 'api/daily-coding/records'
         const STATS_API = 'api/daily-coding/stats'
+        const TODAY_API = 'api/daily-coding/today'
 
         const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 
-        function pad(n) {
-            return String(n).padStart(2, '0')
-        }
-
-        function ymd(y, m, d) {
-            return `${y}-${pad(m)}-${pad(d)}`
-        }
-
-        function todayStr() {
-            const t = new Date()
-            return ymd(t.getFullYear(), t.getMonth() + 1, t.getDate())
-        }
+        function pad(n) { return String(n).padStart(2, '0') }
+        function ymd(y, m, d) { return `${y}-${pad(m)}-${pad(d)}` }
+        function todayStr() { const t = new Date(); return ymd(t.getFullYear(), t.getMonth() + 1, t.getDate()) }
 
         function buildIndex(records) {
             const map = {}
@@ -36,7 +28,6 @@ window.__ModuleLoader__.load({
             return map
         }
 
-        // 翻月：处理跨年
         function shiftMonth(view, delta) {
             let m = view.month + delta
             let y = view.year
@@ -62,7 +53,8 @@ window.__ModuleLoader__.load({
             h3: { margin: 0, fontSize: 15 },
             nav: { display: 'flex', gap: 4 },
             navBtn: { border: '1px solid rgba(127,127,127,0.35)', background: 'transparent', color: 'inherit', borderRadius: 6, fontSize: 12, padding: '2px 8px', cursor: 'pointer' },
-            stats: { opacity: 0.7, fontSize: 12, marginBottom: 10 },
+            stats: { opacity: 0.7, fontSize: 12, marginBottom: 8 },
+            actions: { display: 'flex', gap: 6, marginBottom: 10 },
             week: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', textAlign: 'center', opacity: 0.55, fontSize: 11, marginBottom: 6 },
             grid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 },
             cell: { position: 'relative', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
@@ -72,9 +64,9 @@ window.__ModuleLoader__.load({
             dot: { position: 'absolute', bottom: 5, left: '50%', marginLeft: -2.5, width: 5, height: 5, borderRadius: '50%' },
             dotSolved: { background: '#10b981' },
             dotChecked: { background: '#f59e0b' },
-            card: { marginTop: 14, padding: 10, borderRadius: 8, background: 'rgba(127, 127, 127, 0.10)', minHeight: 60 },
+            card: { marginTop: 14, padding: 10, borderRadius: 8, background: 'rgba(127, 127, 127, 0.10)', minHeight: 56 },
             cardTitle: { fontWeight: 600, marginBottom: 3 },
-            cardMeta: { opacity: 0.7 },
+            cardMeta: { opacity: 0.7, wordBreak: 'break-all' },
             tip: { marginTop: 10, opacity: 0.5, fontSize: 11 },
         }
 
@@ -99,8 +91,10 @@ window.__ModuleLoader__.load({
                 return { year: n.getFullYear(), month: n.getMonth() + 1 }
             })
             const [selected, setSelected] = React.useState(null)
+            const [today, setToday] = React.useState(null)
+            const [busy, setBusy] = React.useState(false)
 
-            React.useEffect(() => {
+            const load = React.useCallback(() => {
                 Promise.all([
                     fetch(STATS_API).then((r) => r.json()),
                     fetch(RECORDS_API).then((r) => r.json()),
@@ -108,18 +102,33 @@ window.__ModuleLoader__.load({
                     .then(([s, r]) => {
                         setStats(s)
                         setRecords(Array.isArray(r.records) ? r.records : [])
+                        setError(null)
                     })
                     .catch((e) => setError(String(e)))
             }, [])
+
+            React.useEffect(() => { load() }, [load])
+
+            async function loadToday() {
+                setBusy(true)
+                try {
+                    const r = await fetch(TODAY_API)
+                    const data = await r.json()
+                    setToday(data)
+                } catch (e) {
+                    setToday({ error: String(e) })
+                } finally {
+                    setBusy(false)
+                }
+            }
 
             if (error) return React.createElement('div', { style: S.wrap }, '取数据失败：' + error)
             if (!stats) return React.createElement('div', { style: S.wrap }, '加载中…')
 
             const index = buildIndex(records)
             const cells = monthCells(view.year, view.month)
-            const today = todayStr()
+            const todayDate = todayStr()
 
-            // 当月完成率
             const prefix = `${view.year}-${pad(view.month)}`
             const monthDone = records.filter((r) => r.date.startsWith(prefix)).length
             const monthDays = new Date(view.year, view.month, 0).getDate()
@@ -136,6 +145,10 @@ window.__ModuleLoader__.load({
             const statsLine = React.createElement('div', { style: S.stats },
                 `累计 ${stats.total} · 连续 ${stats.currentStreak} · 做出来 ${stats.solved} · ${view.month} 月打卡 ${monthDone}/${monthDays} 天（${rate}%）`)
 
+            const actions = React.createElement('div', { style: S.actions },
+                React.createElement('button', { style: S.navBtn, disabled: busy, onClick: loadToday }, '📖 今日题目'),
+                React.createElement('button', { style: S.navBtn, onClick: load }, '🔄 刷新'))
+
             const weekRow = React.createElement('div', { style: S.week },
                 WEEKDAYS.map((w) => React.createElement('div', { key: w }, w)))
 
@@ -145,7 +158,7 @@ window.__ModuleLoader__.load({
                         return React.createElement('div', { key: 'blank-' + i, style: Object.assign({}, S.cell, S.cellEmpty) })
                     }
                     const rec = index[cell.date]
-                    const style = Object.assign({}, S.cell, rec ? S.cellChecked : {}, cell.date === today ? S.cellToday : {})
+                    const style = Object.assign({}, S.cell, rec ? S.cellChecked : {}, cell.date === todayDate ? S.cellToday : {})
                     const children = [React.createElement('span', { key: 'd' }, String(cell.day))]
                     if (rec) {
                         children.push(React.createElement('span', {
@@ -163,8 +176,18 @@ window.__ModuleLoader__.load({
                 : React.createElement('div', { style: S.card },
                     React.createElement('div', { style: S.cardMeta }, '点击有标记的日期，查看当天打卡的题目'))
 
+            const todayCard = today
+                ? React.createElement('div', { style: S.card },
+                    today.error
+                        ? React.createElement('div', { style: S.cardMeta }, '今日题目取失败：' + today.error)
+                        : React.createElement('div', null,
+                            React.createElement('div', { style: S.cardTitle }, `#${today.id} ${today.title}`),
+                            React.createElement('div', { style: S.cardMeta },
+                                `难度 ${today.difficulty || '—'} · https://leetcode.cn/problems/${today.slug}/`)))
+                : null
+
             return React.createElement('div', { style: S.wrap },
-                head, statsLine, weekRow, grid, card,
+                head, statsLine, actions, weekRow, grid, card, todayCard,
                 React.createElement('div', { style: S.tip }, '绿点=打卡且做出来 · 黄点=打卡未做出来 · 橙框=今天'))
         }
 

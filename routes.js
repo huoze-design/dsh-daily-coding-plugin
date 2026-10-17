@@ -1,6 +1,7 @@
-// routes.js —— 宿主半场：两条只读 HTTP 路由（浏览器半场取数用）
-import { readData } from './storage.js'
+// routes.js —— 宿主半场：只读 HTTP 路由（浏览器半场取数用）
+import { readData, readCache, saveCache } from './storage.js'
 import { currentStreak } from './date.js'
+import { fetchDailyQuestion } from './leetcode.js'
 
 function sendJson(res, data) {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
@@ -28,6 +29,22 @@ export function makeRoutes() {
                     solved: records.filter((r) => r.solved).length,
                     last: records.length > 0 ? records[records.length - 1].date : null,
                 })
+            },
+        },
+        {
+            kind: 'exact',
+            path: '/api/daily-coding/today',
+            handler: async (req, res) => {
+                try {
+                    let q = await readCache()
+                    if (!q) {
+                        q = await fetchDailyQuestion()
+                        await saveCache(q)
+                    }
+                    sendJson(res, q)
+                } catch {
+                    sendJson(res, { error: '网络开小差了，没能连上力扣官网。检查一下网络，稍后再试。' })
+                }
             },
         },
     ]
