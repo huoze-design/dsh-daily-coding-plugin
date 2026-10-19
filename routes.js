@@ -36,14 +36,15 @@ export function makeRoutes() {
             path: '/api/daily-coding/today',
             handler: async (req, res) => {
                 try {
-                    let q = await readCache()
+                    const force = String(req.url || '').includes('refresh=1')
+                    let q = force ? null : await readCache()
                     if (!q) {
                         q = await fetchDailyQuestion()
                         await saveCache(q)
                     }
                     sendJson(res, q)
                 } catch {
-                    sendJson(res, { error: '网络开小差了，没能连上力扣官网。检查一下网络，稍后再试。' })
+                    sendJson(res, { error: '网络开小差了，稍后再试' })
                 }
             },
         },

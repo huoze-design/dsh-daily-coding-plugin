@@ -71,6 +71,7 @@ window.__ModuleLoader__.load({
             navBtn: { border: '1px solid rgba(127,127,127,0.35)', background: 'transparent', color: 'inherit', borderRadius: 6, fontSize: 12, padding: '2px 8px', cursor: 'pointer' },
             stats: { opacity: 0.7, fontSize: 12, marginBottom: 8 },
             actions: { display: 'flex', gap: 6, marginBottom: 10 },
+            refreshTip: { fontSize: 11, opacity: 0.65, marginLeft: 6 },
             week: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', textAlign: 'center', opacity: 0.55, fontSize: 11, marginBottom: 6 },
             grid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 },
             cell: { position: 'relative', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
@@ -119,6 +120,8 @@ window.__ModuleLoader__.load({
             const [selected, setSelected] = React.useState(null)
             const [today, setToday] = React.useState(null)
             const [busy, setBusy] = React.useState(false)
+            const [refreshing, setRefreshing] = React.useState(false)
+            const [lastRefresh, setLastRefresh] = React.useState('')
 
             // ===== 时间轴拖动引擎 =====
             const viewRef = React.useRef(null)     // 视口：能看到的那一块
@@ -230,25 +233,29 @@ window.__ModuleLoader__.load({
                 }
             }, [])
 
-            const load = React.useCallback(() => {
-                Promise.all([
-                    fetch(STATS_API).then((r) => r.json()),
-                    fetch(RECORDS_API).then((r) => r.json()),
-                ])
-                    .then(([s, r]) => {
-                        setStats(s)
-                        setRecords(Array.isArray(r.records) ? r.records : [])
-                        setError(null)
-                    })
-                    .catch((e) => setError(String(e)))
+            const load = React.useCallback(async () => {
+                try {
+                    const t = Date.now()
+                    const [s, r] = await Promise.all([
+                        fetch(`${STATS_API}?t=${t}`).then((res) => res.json()),
+                        fetch(`${RECORDS_API}?t=${t}`).then((res) => res.json()),
+                    ])
+                    setStats(s)
+                    setRecords(Array.isArray(r.records) ? r.records : [])
+                    setError(null)
+                    return true
+                } catch (e) {
+                    setError(String(e))
+                    return false
+                }
             }, [])
 
             React.useEffect(() => { load() }, [load])
 
-            async function loadToday() {
+            async function loadToday(force) {
                 setBusy(true)
                 try {
-                    const r = await fetch(TODAY_API)
+                    const r = await fetch(force ? `${TODAY_API}?refresh=1` : TODAY_API)
                     const data = await r.json()
                     setToday(data)
                 } catch (e) {
@@ -256,6 +263,17 @@ window.__ModuleLoader__.load({
                 } finally {
                     setBusy(false)
                 }
+            }
+            async function handleRefresh() {
+                if (refreshing) return
+                setRefreshing(true)
+                const ok = await load()
+                if (ok) {
+                    const n = new Date()
+                    setLastRefresh(`已刷新 ${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`)
+                    if (today) loadToday(true)
+                }
+                setRefreshing(false)
             }
 
             if (error) return React.createElement('div', { style: S.wrap }, '取数据失败：' + error)
@@ -282,8 +300,9 @@ window.__ModuleLoader__.load({
                 `累计 ${stats.total} · 连续 ${stats.currentStreak} · 做出来 ${stats.solved} · ${view.month} 月打卡 ${monthDone}/${monthDays} 天（${rate}%）`)
 
             const actions = React.createElement('div', { style: S.actions },
-                React.createElement('button', { style: S.navBtn, disabled: busy, onClick: loadToday }, '📖 今日题目'),
-                React.createElement('button', { style: S.navBtn, onClick: load }, '🔄 刷新'))
+                React.createElement('button', { style: S.navBtn, disabled: busy, onClick: () => loadToday(false) }, '📖 今日题目'),
+                React.createElement('button', { style: S.navBtn, disabled: refreshing, onClick: handleRefresh }, refreshing ? '⏳ 刷新中…' : '🔄 刷新'),
+                lastRefresh ? React.createElement('span', { style: S.refreshTip }, lastRefresh) : null)
 
             const weekRow = React.createElement('div', { style: S.week },
                 WEEKDAYS.map((w) => React.createElement('div', { key: w }, w)))
