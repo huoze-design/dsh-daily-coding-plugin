@@ -2,7 +2,7 @@
 import { homedir } from 'node:os'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { today } from './date.js'
+import { today, currentStreak } from './date.js'
 
 const DATA_DIR = join(homedir(), '.daily-coding-plugin')
 const DATA_FILE = join(DATA_DIR, 'checkins.json')        // 打卡本
@@ -54,4 +54,33 @@ export async function saveCache(q) {
         difficulty: q.difficulty,
         slug: q.slug,
     }, null, 2), 'utf8')
+}
+// 打一次卡：今天已打过就返回 already，不重复记
+export async function addCheckin(solved) {
+    const data = await readData()
+    const t = today()
+    const dates = data.records.map(r => r.date)
+
+    if (data.records.some(r => r.date === t)) {
+        return { ok: true, already: true, total: data.records.length, currentStreak: currentStreak(dates) }
+    }
+
+    const cache = await readCache()
+    const record = {
+        date: t,
+        id: cache ? cache.id : '',
+        title: cache ? cache.title : '',
+        difficulty: cache ? cache.difficulty : '',
+        solved: solved === true,
+    }
+    data.records.push(record)
+    await saveData(data)
+
+    return {
+        ok: true,
+        already: false,
+        record,
+        total: data.records.length,
+        currentStreak: currentStreak(dates.concat(t)),
+    }
 }

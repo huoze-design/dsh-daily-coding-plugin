@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
         const RECORDS_API = 'api/daily-coding/records'
         const STATS_API = 'api/daily-coding/stats'
         const TODAY_API = 'api/daily-coding/today'
+        const CHECKIN_API = 'api/daily-coding/checkin'
 
         const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -72,6 +73,11 @@ window.__ModuleLoader__.load({
             stats: { opacity: 0.7, fontSize: 12, marginBottom: 8 },
             actions: { display: 'flex', gap: 6, marginBottom: 10 },
             refreshTip: { fontSize: 11, opacity: 0.65, marginLeft: 6 },
+            checkinRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 },
+            checkinAsk: { display: 'inline-flex', gap: 6 },
+            checkinBtn: { border: '1px solid rgba(16,185,129,0.5)', background: 'rgba(16,185,129,0.10)', color: 'inherit', borderRadius: 6, fontSize: 12, padding: '3px 8px', cursor: 'pointer' },
+            checkinDone: { fontSize: 12, color: '#10b981' },
+            checkinMsg: { fontSize: 11, opacity: 0.75, width: '100%' },
             week: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', textAlign: 'center', opacity: 0.55, fontSize: 11, marginBottom: 6 },
             grid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 },
             cell: { position: 'relative', aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
@@ -122,6 +128,8 @@ window.__ModuleLoader__.load({
             const [busy, setBusy] = React.useState(false)
             const [refreshing, setRefreshing] = React.useState(false)
             const [lastRefresh, setLastRefresh] = React.useState('')
+            const [checking, setChecking] = React.useState(false)
+            const [checkinMsg, setCheckinMsg] = React.useState('')
 
             // ===== 时间轴拖动引擎 =====
             const viewRef = React.useRef(null)     // 视口：能看到的那一块
@@ -275,6 +283,40 @@ window.__ModuleLoader__.load({
                 }
                 setRefreshing(false)
             }
+            // 打卡：先试 POST，失败再退 GET
+            async function doCheckin(solved) {
+                if (checking) return
+                setChecking(true)
+                setCheckinMsg('')
+                try {
+                    let data = null
+                    try {
+                        const res = await fetch(CHECKIN_API, {
+                            method: 'POST',
+                            headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify({ solved }),
+                        })
+                        data = await res.json()
+                    } catch {
+                        data = null
+                    }
+                    if (!data || !data.ok) {
+                        data = await fetch(`${CHECKIN_API}?solved=${solved ? 1 : 0}`).then((r) => r.json())
+                    }
+                    if (data.error) {
+                        setCheckinMsg('打卡失败：' + data.error)
+                    } else {
+                        setCheckinMsg(data.already
+                            ? `今天已经打过卡啦（累计 ${data.total} 天）`
+                            : `打卡成功！累计 ${data.total} 天 · 连续 ${data.currentStreak} 天`)
+                        await load()
+                    }
+                } catch (e) {
+                    setCheckinMsg('打卡失败：' + String(e && e.message ? e.message : e))
+                } finally {
+                    setChecking(false)
+                }
+            }
 
             if (error) return React.createElement('div', { style: S.wrap }, '取数据失败：' + error)
             if (!stats) return React.createElement('div', { style: S.wrap }, '加载中…')
@@ -298,6 +340,22 @@ window.__ModuleLoader__.load({
 
             const statsLine = React.createElement('div', { style: S.stats },
                 `累计 ${stats.total} · 连续 ${stats.currentStreak} · 做出来 ${stats.solved} · ${view.month} 月打卡 ${monthDone}/${monthDays} 天（${rate}%）`)
+            
+            const recToday = index[todayDate]
+            const checkinRow = React.createElement('div', { style: S.checkinRow },
+                recToday
+                    ? React.createElement('span', { style: S.checkinDone },
+                        recToday.solved ? '今天已打卡 · 做出来了 ✅' : '今天已打卡 · 还没做出来 🟡')
+                    : React.createElement('span', { style: S.checkinAsk },
+                        React.createElement('button', {
+                            style: S.checkinBtn, disabled: checking,
+                            onClick: () => doCheckin(true),
+                        }, checking ? '打卡中…' : '✅ 做出来了'),
+                        React.createElement('button', {
+                            style: S.checkinBtn, disabled: checking,
+                            onClick: () => doCheckin(false),
+                        }, '🟡 还没做出来')),
+                checkinMsg ? React.createElement('div', { style: S.checkinMsg }, checkinMsg) : null)
 
             const actions = React.createElement('div', { style: S.actions },
                 React.createElement('button', { style: S.navBtn, disabled: busy, onClick: () => loadToday(false) }, '📖 今日题目'),
@@ -375,7 +433,7 @@ window.__ModuleLoader__.load({
                         React.createElement('span', { style: Object.assign({}, S.legendDot, S.barNone) }), '没打卡')))
 
             return React.createElement('div', { style: S.wrap },
-                head, statsLine, actions, weekRow, grid, card, todayCard, chart,
+                head, statsLine, checkinRow, actions, weekRow, grid, card, todayCard, chart,
                 React.createElement('div', { style: S.tip }, '按住时间轴左右拖动，查看前后月份 · 绿=做出来 · 黄=只打卡'))
         }
 
